@@ -52,9 +52,47 @@ class ReportScheduleService(BaseModuleService):
             update["status"] = "运行中"
         return report_content
 
+    # ------------------------------------------------------------------
+    # 已发布报告锚定生效口径批次，支持按原批次与输入范围复算。
+    # ------------------------------------------------------------------
+    def _batch_service(self):
+        from app.services.effective_batch import get_service
+        return get_service()
+
+    def publish_effective_report(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._batch_service().create_report(*args, **kwargs)
+
+    def recompute_report(self, report_ref: Any = None, **kwargs: Any) -> dict[str, Any]:
+        """按报告原锚定批次复算；口径切换后仍得到旧口径结果。"""
+        return self._batch_service().recompute_report(report_ref, **kwargs)
+
+    recalculate_report = recompute_report
+    replay_report = recompute_report
+
+    _RECOMPUTE_ACTIONS = {
+        "复算", "重新核算", "重新计算", "重算", "按原批次复算",
+        "recompute", "recalculate", "recalc", "replay",
+    }
+
+    def run_action(self, entry_id: int, action: str):  # type: ignore[override]
+        """通用 ``/api/report_schedule/{id}/actions`` 分派：复算类动作走批次锚点。"""
+        text = str(action or "").strip()
+        if text in self._RECOMPUTE_ACTIONS or "复算" in text or "核算" in text:
+            try:
+                batch_svc = self._batch_service()
+                if not batch_svc.reports:
+                    batch_svc.seed_scenario()
+                result = self.recompute_report(entry_id)
+                if not result.get("ok", True):
+                    return None, str(result.get("error") or "复算失败")
+                return result, "报告已按其锚定的原口径批次与输入范围复算"
+            except Exception as exc:  # noqa: BLE001
+                return None, str(exc)
+        return super().run_action(entry_id, action)
+
     def domain_enrich(self, config_id: int) -> dict:
         """对当前模块执行存储操作，联动导出和回填，产出标准化数据产物。
-        
+
         数据加工流程：读取原始记录 → 执行存储处理 → 导出校验字段完整性 → 生成回填批次标识 →
         写入存储层并返回可追溯的处理结果，下游消费模块可基于批次号追踪数据链路。
         """

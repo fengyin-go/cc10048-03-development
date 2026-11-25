@@ -42,3 +42,35 @@ class MetricDefService(BaseModuleService):
             "time_window": metric.get("时间窗口", "N/A"),
             "dimensions": str(metric.get("维度组合", "")).split(",") if metric.get("维度组合") else [],
         }
+
+    # ------------------------------------------------------------------
+    # 生效口径批次：指标定义版本 -> 生效结果（准备/可读/已归档）。
+    # 逻辑统一放在 effective_batch 服务，这里保留符合模块直觉的入口。
+    # ------------------------------------------------------------------
+    def _batch_service(self):
+        from app.services.effective_batch import get_service
+        return get_service()
+
+    def register_caliber_version(self, metric_id: Any, version: str, **kwargs: Any) -> dict[str, Any]:
+        return self._batch_service().register_version(metric_id, version, **kwargs)
+
+    register_version = register_caliber_version
+    add_version = register_caliber_version
+
+    def create_effective_batch(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._batch_service().create_batch(*args, **kwargs)
+
+    def get_effective_batch(self, metric_id: Any = None) -> dict[str, Any] | None:
+        return self._batch_service().get_current_batch(metric_id)
+
+    def current_effective_batch(self, metric_id: Any = None) -> dict[str, Any] | None:
+        return self._batch_service().get_current_batch(metric_id)
+
+    def query_effective(self, metric_id: Any = None, **kwargs: Any) -> dict[str, Any]:
+        return self._batch_service().query_metric(metric_id, **kwargs)
+
+    def query_by_effective_batch(self, **kwargs: Any) -> dict[str, Any]:
+        return self._batch_service().query_metric(**kwargs)
+
+    def switch_effective_batch(self, ref: Any) -> dict[str, Any]:
+        return self._batch_service().switch_current_batch(ref)

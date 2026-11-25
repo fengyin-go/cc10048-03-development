@@ -109,3 +109,7 @@ desktop.ini
 !**/.env.example
 !.env.example
 # END S11 LOCAL SNAPSHOT EXCLUSIONS
+
+# 生效口径批次本地持久化状态
+backend/.data/
+.data/

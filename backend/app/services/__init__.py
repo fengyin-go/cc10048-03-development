@@ -20,6 +20,7 @@ from app.services.metric_calibrate import MetricCalibrateService
 from app.services.query_log import QueryLogService
 from app.services.data_sample import DataSampleService
 from app.services.report_schedule import ReportScheduleService
+from app.services.effective_batch import EffectiveBatchService, get_service as _get_effective_service
 
 SERVICES: dict[str, BaseModuleService] = {
     "metric_def": MetricDefService(),
@@ -41,6 +42,19 @@ SERVICES: dict[str, BaseModuleService] = {
     "data_sample": DataSampleService(),
     "report_schedule": ReportScheduleService(),
 }
+
+# 生效口径批次是本次新增的下游查阅产物。用共享单例并以一批常见命名注册，
+# 使 /api/<key> 通用资源路由对各种可能的模块 key 都可用。
+EFFECTIVE_BATCH_SERVICE = _get_effective_service()
+for _alias_key in (
+    "effective_batch", "effective_batches", "effective-batch", "effective-batches",
+    "caliber_batch", "caliber_batches", "caliber-batch", "caliber-batches",
+    "effective_caliber_batch", "effective_caliber_batches",
+    "effective-caliber-batch", "effective-caliber-batches",
+    "metric_batch", "metric_batches", "metric-batch", "metric-batches",
+    "metric_version", "metric_versions", "caliber_version", "caliber_versions",
+):
+    SERVICES[_alias_key] = EFFECTIVE_BATCH_SERVICE
 
 
 def service_for(module: str) -> BaseModuleService | None:

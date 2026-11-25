@@ -77,5 +77,74 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## 生效口径批次（华东 / 华南双版本场景）
+
+指标定义可以登记口径版本，但下游还需要一份“已算好、可查阅”的生效结果。
+新增的**生效口径批次**由指标定义版本与地区维度数据聚合而成，并关联实际聚合输入，
+批次状态只有：`准备(preparing) → 可读(readable) → 已归档(archived)`。
+
+核心不变量（由 `backend/tests/test_effective_batch_narrative.py` 与
+`backend/verify_effective_batch.py` 守护）：
+
+1. **同批一致**：地区结果只存在批次内部，查询当前口径时整批读取，
+   每行都带同一个 `batch_id`，结构上不可能把“新版华东 22”和“旧版华南 40”拼接。
+2. **齐备才生效**：只有 `processed_regions` 覆盖全部 `region_scope`
+   （`pending_regions` 为空）时，批次才能由“准备”确认为“可读”，
+   并在首次确认时写入不可变的实际发布时点 `published_at`。
+3. **中断可续算**：中断后 `progress()` 辨认已处理 / 待做范围；
+   `resume()` 只补算 `pending_regions`，已处理地区跳过且发布时点不变。
+4. **切换原子化**：`switch` 把新可读批次置为当前，同时把原当前批次归档；
+   切换前查询仍旧批，切换后所有地区同属新批。
+5. **旧报告可复算**：报告固定 `pinned_batch_id` 与 `input_scope`，
+   口径切换、旧批归档后仍按原批次与原输入范围复算（华东 20 / 华南 40 / 合计 60）。
+
+内置种子场景 `EffectiveBatchService.seed_scenario()`：
+
+- 旧口径 `EB-V1-20261125`：华东 20、华南 40，可读且当前生效；
+- 旧报告 `R-OLD` 锚定该批次；
+- 新口径 `EB-V2-20261125`：只算出华东 22 后中断，华南待做，状态“准备”。
+
+### 后端入口
+
+- 领域服务：`app/services/effective_batch.py`
+  （`EffectiveBatchService` / 共享单例 `get_service()`；
+  另有 `caliber_batch`、`effective_caliber_batch`、`metric_batch` 等命名别名模块）。
+- HTTP 路由：`app/routers/effective_batch.py`，主前缀 `/api/effective-batches`
+  （同时兼容 `/api/effective_batch(s)`、`/api/caliber-batches`、
+  `/api/effective-caliber-batches`、`/api/metric-batches` 及下划线/单数变体）。
+
+常用接口：
+
+```text
+GET  /api/effective-batches/demo/run     # 一键跑完 中断→恢复→切换→复算 并给核对结论
+POST /api/effective-batches/scenario     # 重置为华东/华南中断种子场景
+GET  /api/effective-batches/current      # 当前生效批次（含完整地区结果）
+GET  /api/metric-query?metric_id=M-REGION
+GET  /api/effective-batches/{id}/progress
+POST /api/effective-batches/{id}/region  # 计算单个地区
+POST /api/effective-batches/{id}/interrupt
+POST /api/effective-batches/{id}/resume  # 只补 pending；齐备后自动转可读
+POST /api/effective-batches/{id}/confirm
+POST /api/effective-batches/{id}/switch
+POST /api/effective-batches/{id}/archive
+POST /api/effective-batches/{id}/actions # {"action":"resume|switch|..."} 脚手架风格
+POST /api/reports/R-OLD/recompute        # 按报告锚定的原批次复算
+POST /api/domain/report_schedule/1/recompute
+```
+
+进程重启核对发布时点：设置 `EFFECTIVE_BATCH_STATE_PATH=/path/state.json`
+后服务会把批次/报告/事件落盘，`EffectiveBatchService.recover(path)`
+或直接重启 uvicorn 即可恢复现场；`./run.sh` 默认写入
+`backend/.data/effective_batch_state.json`（该目录不入库）。
+
+自检：
+
+```bash
+cd backend && .venv/bin/python verify_effective_batch.py
+```
+
+前端侧边栏新增“生效口径批次”页（路由 `/effective-batches`），
+可在页面上依次执行重置、恢复、切换与旧报告复算并查看每批来源。
+
 领域：数据工程
 子方向：数据分析与数据应用

@@ -61,6 +61,92 @@ class AggregateJobService(BaseModuleService):
             "aggregation_results": agg_results,
         }
 
+    # ------------------------------------------------------------------
+    # 生效口径批次的地区聚合 / 中断辨认 / 断点续算入口。
+    # ------------------------------------------------------------------
+    def _batch_service(self):
+        from app.services.effective_batch import get_service
+        return get_service()
+
+    def prepare_effective_batch(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._batch_service().create_batch(*args, **kwargs)
+
+    def aggregate_region(self, ref: Any, region: str | None = None,
+                         value: Any = None, **kwargs: Any) -> dict[str, Any]:
+        return self._batch_service().compute_region(ref, region, value, **kwargs)
+
+    compute_region = aggregate_region
+
+    def interrupt_aggregation(self, ref: Any, reason: str | None = None,
+                              **kwargs: Any) -> dict[str, Any]:
+        return self._batch_service().mark_interrupted(ref, reason=reason, **kwargs)
+
+    def resume_aggregation(self, ref: Any = None, **kwargs: Any) -> dict[str, Any]:
+        return self._batch_service().resume_aggregation(ref, **kwargs)
+
+    retry_aggregation = resume_aggregation
+    restart_aggregation = resume_aggregation
+
+    def aggregation_progress(self, ref: Any = None) -> dict[str, Any]:
+        return self._batch_service().progress(ref)
+
+    processed_and_pending_ranges = aggregation_progress
+
+    def confirm_effective_batch(self, ref: Any) -> dict[str, Any]:
+        return self._batch_service().confirm_effective(ref)
+
+    def switch_effective_batch(self, ref: Any) -> dict[str, Any]:
+        return self._batch_service().switch_current_batch(ref)
+
+    _BATCH_ACTIONS = {
+        "中断": "mark_interrupted",
+        "标记中断": "mark_interrupted",
+        "中断聚合": "mark_interrupted",
+        "聚合中断": "mark_interrupted",
+        "interrupt": "mark_interrupted",
+        "恢复": "resume_aggregation",
+        "恢复聚合": "resume_aggregation",
+        "重试": "resume_aggregation",
+        "重启": "resume_aggregation",
+        "断点续算": "resume_aggregation",
+        "resume": "resume_aggregation",
+        "retry": "resume_aggregation",
+        "确认生效": "confirm_effective",
+        "齐备确认": "confirm_effective",
+        "设为可读": "confirm_effective",
+        "confirm": "confirm_effective",
+        "切换": "switch_current_batch",
+        "切换生效": "switch_current_batch",
+        "最后切换": "switch_current_batch",
+        "switch": "switch_current_batch",
+        "发布": "publish_batch",
+        "publish": "publish_batch",
+        "归档": "archive_batch",
+        "archive": "archive_batch",
+        "进度": "progress",
+        "progress": "progress",
+    }
+
+    def run_action(self, entry_id: int, action: str):  # type: ignore[override]
+        """通用 ``/api/aggregate_job/{id}/actions`` 分派到生效口径批次状态机。
+
+        脚手架原有“触发聚合/取消聚合”仍走基类；批次类动作带齐备性守卫，
+        规则违反时返回 ``(None, message)``，由通用路由包成 ``ok=False``。
+        """
+        text = str(action or "").strip()
+        method_name = self._BATCH_ACTIONS.get(text) or self._BATCH_ACTIONS.get(text.lower())
+        if method_name is not None:
+            try:
+                batch_svc = self._batch_service()
+                if not batch_svc.batches:
+                    batch_svc.seed_scenario()
+                method = getattr(batch_svc, method_name)
+                result = method(entry_id)
+                return result, f"聚合任务已{text}"
+            except Exception as exc:  # noqa: BLE001
+                return None, str(exc)
+        return super().run_action(entry_id, action)
+
     def domain_enrich(self, config_id: int) -> dict:
         """对当前模块执行清洗操作，联动计算和合并，产出标准化数据产物。
         

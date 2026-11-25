@@ -76,7 +76,18 @@ def chain_metric_query(metric_id: int) -> dict[str, Any]:
         "pre_aggregation_jobs": job_results,
         "dimension_queries": query_results,
         "cache_simulation": cache_results,
+        "effective_caliber_batch": _safe_effective_batch_query(metric_id),
     }
+
+
+def _safe_effective_batch_query(metric_id: int) -> dict[str, Any] | None:
+    """链路附加：按当前生效口径批次读取完整地区结果（不可用时不影响主链）。"""
+    try:
+        from app.services.effective_batch import get_service
+        result = get_service().query_metric(metric_id)
+        return result if result.get("ok") else None
+    except Exception:
+        return None
 
 
 # ---- 链路2：实验管理→显著性检验→数据采样 ----
